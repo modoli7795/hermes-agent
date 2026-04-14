@@ -34,8 +34,26 @@ def _build_advisor_prompt(goal: str, context: str, mode: str) -> str:
 
 
 
+def _make_stub_parent(runtime: Dict[str, Any]):
+    """Create a minimal stub parent agent when no real parent is available (e.g. standalone tests)."""
+    from run_agent import AIAgent
+    return AIAgent(
+        model=runtime.get("model") or "claude-haiku-4-5",
+        provider=runtime.get("provider"),
+        base_url=runtime.get("base_url"),
+        api_key=runtime.get("api_key"),
+        api_mode=runtime.get("api_mode"),
+        max_iterations=1,
+        quiet_mode=True,
+        skip_context_files=True,
+        skip_memory=True,
+    )
+
+
 def _build_advisor_child(*, parent_agent, goal: str, context: str, runtime: Dict[str, Any], task_index: int = 0):
     from tools.delegate_tool import _build_child_agent
+
+    effective_parent = parent_agent if parent_agent is not None else _make_stub_parent(runtime)
 
     return _build_child_agent(
         task_index=task_index,
@@ -44,7 +62,7 @@ def _build_advisor_child(*, parent_agent, goal: str, context: str, runtime: Dict
         toolsets=runtime.get("toolsets") or _DEFAULT_TOOLSETS,
         model=runtime.get("model"),
         max_iterations=int(runtime.get("max_iterations") or 12),
-        parent_agent=parent_agent,
+        parent_agent=effective_parent,
         override_provider=runtime.get("provider"),
         override_base_url=runtime.get("base_url"),
         override_api_key=runtime.get("api_key"),
