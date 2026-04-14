@@ -1588,3 +1588,91 @@ class TestToolChoice:
             tool_choice="search",
         )
         assert kwargs["tool_choice"] == {"type": "tool", "name": "search"}
+
+
+# ── Task 3: convert_tools_to_anthropic preserves server tool types ──────────
+
+def test_convert_tools_preserves_advisor_tool_type():
+    from agent.anthropic_adapter import convert_tools_to_anthropic
+    tools = [
+        {"function": {"name": "terminal", "description": "run cmd", "parameters": {"type": "object", "properties": {}}}},
+        {"type": "advisor_20260301", "name": "advisor", "model": "claude-opus-4-6", "max_uses": 1},
+    ]
+    result = convert_tools_to_anthropic(tools)
+    advisor = next((t for t in result if t.get("type") == "advisor_20260301"), None)
+    assert advisor is not None
+    assert advisor["model"] == "claude-opus-4-6"
+    assert advisor["max_uses"] == 1
+    terminal_tool = next((t for t in result if t.get("name") == "terminal"), None)
+    assert terminal_tool is not None
+    assert "input_schema" in terminal_tool
+
+
+# ── Task 4: normalize_anthropic_response advisor blocks ─────────────────────
+
+from types import SimpleNamespace as _SN
+
+def _make_mock_advisor_response():
+    block1 = _SN(type="text", text="I'll consult the advisor.")
+    block2 = _SN(type="server_tool_use", id="srv_01", name="advisor", input={})
+    inner = _SN(type="advisor_result", text="Use insertion sort.")
+    block3 = _SN(type="advisor_tool_result", tool_use_id="srv_01", content=inner)
+    block4 = _SN(type="text", text="Based on advisor: insertion sort.")
+    return _SN(content=[block1, block2, block3, block4], stop_reason="end_turn")
+
+def test_normalize_response_captures_advisor_native_blocks():
+    from agent.anthropic_adapter import normalize_anthropic_response
+    response = _make_mock_advisor_response()
+    msg, finish = normalize_anthropic_response(response)
+    assert finish == "stop"
+    assert "consult" in (msg.content or "")
+    assert hasattr(msg, "advisor_native_blocks")
+    assert msg.advisor_native_blocks is not None
+    types = [b["type"] for b in msg.advisor_native_blocks]
+    assert "server_tool_use" in types
+    assert "advisor_tool_result" in types
+
+def test_normalize_response_advisor_result_text_preserved():
+    from agent.anthropic_adapter import normalize_anthropic_response
+    response = _make_mock_advisor_response()
+    msg, _ = normalize_anthropic_response(response)
+    block = next(b for b in msg.advisor_native_blocks if b["type"] == "advisor_tool_result")
+    assert block["content"]["type"] == "advisor_result"
+    assert "insertion sort" in block["content"]["text"]
+    assert block["tool_use_id"] == "srv_01"
+
+def test_normalize_response_no_advisor_blocks_returns_none():
+    from agent.anthropic_adapter import normalize_anthropic_response
+    response = _SN(content=[_SN(type="text", text="hello")], stop_reason="end_turn")
+    msg, _ = normalize_anthropic_response(response)
+    assert not getattr(msg, "advisor_native_blocks", None)
+
+
+# ── Task 5: build_anthropic_kwargs native_advisor beta header ────────────────
+
+def test_build_anthropic_kwargs_adds_advisor_beta_header():
+    from agent.anthropic_adapter import build_anthropic_kwargs
+    kwargs = build_anthropic_kwargs(
+        model="claude-haiku-4-5-20251001",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "advisor_20260301", "name": "advisor", "model": "claude-opus-4-6", "max_uses": 1}],
+        max_tokens=100,
+        reasoning_config=None,
+        native_advisor=True,
+    )
+    beta_header = kwargs.get("extra_headers", {}).get("anthropic-beta", "")
+    assert "advisor-tool-2026-03-01" in beta_header
+    assert any(t.get("type") == "advisor_20260301" for t in kwargs.get("tools", []))
+
+def test_build_anthropic_kwargs_no_advisor_beta_when_false():
+    from agent.anthropic_adapter import build_anthropic_kwargs
+    kwargs = build_anthropic_kwargs(
+        model="claude-haiku-4-5-20251001",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[],
+        max_tokens=100,
+        reasoning_config=None,
+        native_advisor=False,
+    )
+    beta_header = kwargs.get("extra_headers", {}).get("anthropic-beta", "")
+    assert "advisor-tool-2026-03-01" not in beta_header

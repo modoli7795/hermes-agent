@@ -776,12 +776,20 @@ def _sanitize_tool_id(tool_id: str) -> str:
     return sanitized or "tool_0"
 
 
+_SERVER_TOOL_TYPES = {"advisor_20260301", "web_search_20250305", "computer_use_20241022"}
+
+
 def convert_tools_to_anthropic(tools: List[Dict]) -> List[Dict]:
-    """Convert OpenAI tool definitions to Anthropic format."""
+    """Convert OpenAI tool definitions to Anthropic format.
+    Server-side native tool types (e.g. advisor_20260301) are passed through unchanged.
+    """
     if not tools:
         return []
     result = []
     for t in tools:
+        if t.get("type") in _SERVER_TOOL_TYPES:
+            result.append(dict(t))
+            continue
         fn = t.get("function", {})
         result.append({
             "name": fn.get("name", ""),
@@ -1196,6 +1204,7 @@ def build_anthropic_kwargs(
     context_length: Optional[int] = None,
     base_url: str | None = None,
     fast_mode: bool = False,
+    native_advisor: bool = False,
 ) -> Dict[str, Any]:
     """Build kwargs for anthropic.messages.create().
 
@@ -1346,6 +1355,22 @@ def build_anthropic_kwargs(
         betas.append(_FAST_MODE_BETA)
         kwargs["extra_headers"] = {"anthropic-beta": ",".join(betas)}
 
+    # ── Native advisor beta header ──────────────────────────────────────
+    if native_advisor and not _is_third_party_anthropic_endpoint(base_url):
+        _ADVISOR_BETA = "advisor-tool-2026-03-01"
+        existing_headers = dict(kwargs.get("extra_headers") or {})
+        existing_beta = existing_headers.get("anthropic-beta", "")
+        if _ADVISOR_BETA not in existing_beta:
+            if existing_beta:
+                betas_list = [b.strip() for b in existing_beta.split(",") if b.strip()]
+            else:
+                betas_list = list(_common_betas_for_base_url(base_url))
+                if is_oauth:
+                    betas_list.extend(_OAUTH_ONLY_BETAS)
+            betas_list.append(_ADVISOR_BETA)
+            existing_headers["anthropic-beta"] = ",".join(betas_list)
+            kwargs["extra_headers"] = existing_headers
+
     return kwargs
 
 
@@ -1365,16 +1390,18 @@ def normalize_anthropic_response(
     reasoning_parts = []
     reasoning_details = []
     tool_calls = []
+    advisor_native_blocks = []
 
     for block in response.content:
-        if block.type == "text":
+        btype = block.type
+        if btype == "text":
             text_parts.append(block.text)
-        elif block.type == "thinking":
+        elif btype == "thinking":
             reasoning_parts.append(block.thinking)
             block_dict = _to_plain_data(block)
             if isinstance(block_dict, dict):
                 reasoning_details.append(block_dict)
-        elif block.type == "tool_use":
+        elif btype == "tool_use":
             name = block.name
             if strip_tool_prefix and name.startswith(_MCP_TOOL_PREFIX):
                 name = name[len(_MCP_TOOL_PREFIX):]
@@ -1388,6 +1415,33 @@ def normalize_anthropic_response(
                     ),
                 )
             )
+        elif btype == "server_tool_use":
+            advisor_native_blocks.append({
+                "type": "server_tool_use",
+                "id": block.id,
+                "name": block.name,
+                "input": getattr(block, "input", {}),
+            })
+        elif btype == "advisor_tool_result":
+            inner = block.content
+            inner_type = getattr(inner, "type", None)
+            if inner_type == "advisor_result":
+                inner_dict = {"type": "advisor_result", "text": inner.text}
+            elif inner_type == "advisor_redacted_result":
+                inner_dict = {"type": "advisor_redacted_result", "encrypted_content": getattr(inner, "encrypted_content", "")}
+            else:
+                inner_dict = {"type": str(inner_type) if inner_type else "unknown"}
+            advisor_native_blocks.append({
+                "type": "advisor_tool_result",
+                "tool_use_id": block.tool_use_id,
+                "content": inner_dict,
+            })
+        elif btype == "advisor_tool_result_error":
+            advisor_native_blocks.append({
+                "type": "advisor_tool_result_error",
+                "tool_use_id": getattr(block, "tool_use_id", ""),
+                "error_code": getattr(block, "error_code", "unknown"),
+            })
 
     # Map Anthropic stop_reason to OpenAI finish_reason
     stop_reason_map = {
@@ -1405,6 +1459,7 @@ def normalize_anthropic_response(
             reasoning="\n\n".join(reasoning_parts) if reasoning_parts else None,
             reasoning_content=None,
             reasoning_details=reasoning_details or None,
+            advisor_native_blocks=advisor_native_blocks or None,
         ),
         finish_reason,
     )
