@@ -109,6 +109,16 @@ def _display_source(source: str) -> str:
     return source.split(":", 1)[1] if source.startswith("manual:") else source
 
 
+def _print_advisor_auth_guidance(provider: str, requested_type: str) -> None:
+    if provider == "anthropic" and requested_type == AUTH_TYPE_OAUTH:
+        print("Advisor auth: Anthropic prefers OAuth/subscription-backed login for advisor usage.")
+        print("Tip: use pooled Anthropic OAuth credentials for Opus advisor rotation.")
+    elif provider == "openai-codex" and requested_type == AUTH_TYPE_OAUTH:
+        print("Advisor auth: OpenAI Codex prefers OAuth/subscription-backed login for advisor usage.")
+    elif provider == "gemini":
+        print("Advisor auth: Gemini is currently API-key-only in Hermes (no OAuth advisor login path yet).")
+
+
 def _format_exhausted_status(entry) -> str:
     if entry.last_status != STATUS_EXHAUSTED:
         return ""
@@ -150,6 +160,7 @@ def auth_add_command(args) -> None:
             requested_type = AUTH_TYPE_OAUTH if provider in {"anthropic", "nous", "openai-codex", "qwen-oauth"} else AUTH_TYPE_API_KEY
 
     pool = load_pool(provider)
+    _print_advisor_auth_guidance(provider, requested_type)
 
     if requested_type == AUTH_TYPE_API_KEY:
         token = (getattr(args, "api_key", None) or "").strip()

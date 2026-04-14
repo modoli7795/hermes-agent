@@ -60,7 +60,25 @@ def test_auth_add_api_key_persists_manual_entry(tmp_path, monkeypatch):
     assert entry["access_token"] == "sk-or-manual"
 
 
-def test_auth_add_anthropic_oauth_persists_pool_entry(tmp_path, monkeypatch):
+def test_auth_add_gemini_prints_api_key_only_guidance(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1, "providers": {}})
+
+    from hermes_cli.auth_commands import auth_add_command
+
+    class _Args:
+        provider = "gemini"
+        auth_type = "api-key"
+        api_key = "gem-key"
+        label = "gemini-main"
+
+    auth_add_command(_Args())
+
+    out = capsys.readouterr().out
+    assert "Gemini is currently API-key-only in Hermes" in out
+
+
+def test_auth_add_anthropic_oauth_persists_pool_entry(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_TOKEN", raising=False)
@@ -85,6 +103,10 @@ def test_auth_add_anthropic_oauth_persists_pool_entry(tmp_path, monkeypatch):
         label = None
 
     auth_add_command(_Args())
+
+    out = capsys.readouterr().out
+    assert "Anthropic prefers OAuth/subscription-backed login" in out
+    assert "Opus advisor rotation" in out
 
     payload = json.loads((tmp_path / "hermes" / "auth.json").read_text())
     entries = payload["credential_pool"]["anthropic"]
@@ -149,7 +171,7 @@ def test_auth_add_nous_oauth_persists_pool_entry(tmp_path, monkeypatch):
     assert entry["portal_base_url"] == "https://portal.example.com"
 
 
-def test_auth_add_codex_oauth_persists_pool_entry(tmp_path, monkeypatch):
+def test_auth_add_codex_oauth_persists_pool_entry(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     _write_auth_store(tmp_path, {"version": 1, "providers": {}})
     token = _jwt_with_email("codex@example.com")
@@ -174,6 +196,9 @@ def test_auth_add_codex_oauth_persists_pool_entry(tmp_path, monkeypatch):
         label = None
 
     auth_add_command(_Args())
+
+    out = capsys.readouterr().out
+    assert "OpenAI Codex prefers OAuth/subscription-backed login" in out
 
     payload = json.loads((tmp_path / "hermes" / "auth.json").read_text())
     entries = payload["credential_pool"]["openai-codex"]

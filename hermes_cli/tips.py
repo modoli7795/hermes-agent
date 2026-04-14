@@ -92,6 +92,7 @@ TIPS = [
     "hermes mcp add github --command npx adds MCP servers from the command line.",
     "hermes mcp serve runs Hermes itself as an MCP server for other agents.",
     "hermes auth add lets you add multiple API keys for credential pool rotation.",
+    "For advisor workflows, prefer OAuth-backed Anthropic and OpenAI Codex accounts; Gemini is currently API-key-only in Hermes.",
     "hermes completion bash >> ~/.bashrc enables tab completion for all commands and profiles.",
     "hermes logs -f follows agent.log in real time. --level WARNING --since 1h filters output.",
     "hermes backup creates a zip backup of your entire Hermes home directory.",
