@@ -130,3 +130,24 @@ class TestLoadCliConfigExpansion:
         config = load_cli_config()
 
         assert config["auxiliary"]["vision"]["api_key"] == "${UNSET_CLI_VAR_ABC}"
+
+
+class TestAdvisorDefaults:
+    def test_load_config_includes_advisor_defaults(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("model: {}\n")
+
+        monkeypatch.setattr("hermes_cli.config.get_config_path", lambda: config_file)
+
+        config = load_config()
+
+        assert config["advisor"]["enabled"] is False
+        assert config["advisor"]["mode"] == "external"
+        assert config["advisor"]["invocation"] == "hybrid"
+        assert config["advisor"]["call_mode"] == "single"
+        assert config["advisor"]["advisor_count"] == 2
+        assert config["advisor"]["debate_rounds"] == 1
+        assert config["advisor"]["autonomous_modes"]["default"] == "single"
+        assert config["advisor"]["autonomous_modes"]["architecture"] == "parallel"
+        assert config["advisor"]["autonomous_modes"]["high_stakes"] == "debate"
+        assert config["advisor"]["providers"][0]["oauth_preferred"] is True

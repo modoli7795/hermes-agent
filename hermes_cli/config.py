@@ -607,6 +607,52 @@ DEFAULT_CONFIG = {
                                  # "low", "minimal", "none" (empty = inherit parent's level)
     },
 
+    # Advisor routing — separate from general delegation. Used when Hermes
+    # should consult one or more stronger models for guidance. Phase 1 uses
+    # external subagent delegation, not Anthropic native advisor-tool.
+    "advisor": {
+        "enabled": False,
+        "mode": "external",              # external | off
+        "strategy": "on_demand",         # on_demand | always_verify | manual_only
+        "invocation": "hybrid",          # explicit | autonomous | hybrid
+        "call_mode": "single",           # single | parallel | debate
+        "provider": "",                  # default provider for single mode
+        "model": "",                     # default model for single mode
+        "base_url": "",                  # optional direct endpoint
+        "api_key": "",                   # optional direct API key
+        "reasoning_effort": "",          # override for advisor child
+        "max_iterations": 12,
+        "max_advice_chars": 4000,
+        "max_uses_per_turn": 1,
+        "toolsets": ["terminal", "file"],
+        "advisor_count": 2,
+        "debate_rounds": 1,
+        "providers": [
+            {
+                "provider": "",
+                "model": "",
+                "label": "",
+                "base_url": "",
+                "api_key": "",
+                "weight": 1,
+                "oauth_preferred": True,
+            }
+        ],
+        "autonomous_modes": {
+            "default": "single",
+            "architecture": "parallel",
+            "high_stakes": "debate",
+        },
+        "trigger_keywords": [
+            "double-check",
+            "second opinion",
+            "verify",
+            "hard bug",
+            "architecture",
+            "tradeoff",
+        ],
+    },
+
     # Ephemeral prefill messages file — JSON list of {role, content} dicts
     # injected at the start of every API call for few-shot priming.
     # Never saved to sessions, logs, or trajectories.
@@ -700,7 +746,7 @@ DEFAULT_CONFIG = {
     },
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 17,
+    "_config_version": 18,
 }
 
 # =============================================================================
