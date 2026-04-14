@@ -2002,6 +2002,121 @@ class AIAgent:
         return (user_targets_workspace or assistant_targets_workspace) and assistant_mentions_action
     
     
+    def _build_advisor_context_summary(self, messages: List[Dict[str, Any]], limit_chars: int = 2000) -> str:
+        """Build a compact plaintext summary from recent visible messages."""
+        parts = []
+        total = 0
+        for msg in reversed(messages[-8:]):
+            if not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role") or "unknown")
+            content = msg.get("content")
+            if isinstance(content, list):
+                text = " ".join(str(item) for item in content if item)
+            else:
+                text = str(content or "")
+            text = self._strip_think_blocks(text).strip()
+            if not text:
+                continue
+            chunk = f"{role}: {text}"
+            if total + len(chunk) > limit_chars:
+                remaining = max(0, limit_chars - total)
+                if remaining > 0:
+                    parts.append(chunk[:remaining])
+                break
+            parts.append(chunk)
+            total += len(chunk)
+        return "\n".join(reversed(parts))
+
+    def _format_advisor_note(self, result: Dict[str, Any], mode: str) -> str:
+        """Render advisor output into a compact assistant-visible note."""
+        lines = [f"[Advisor summary mode={mode}]"]
+        if mode == "single":
+            provider = result.get("advisor_provider") or result.get("label") or "advisor"
+            model = result.get("advisor_model") or ""
+            header = provider if not model else f"{provider}/{model}"
+            lines.append(f"Advisor {header}: {result.get('summary', '')}")
+        elif mode == "parallel":
+            for item in result.get("results") or []:
+                label = item.get("label") or item.get("advisor_provider") or "advisor"
+                lines.append(f"Advisor {label}: {item.get('summary', '')}")
+            lines.append(f"Synthesized recommendation: {result.get('summary', '')}")
+        elif mode == "debate":
+            for item in result.get("initial_results") or []:
+                label = item.get("label") or item.get("advisor_provider") or "advisor"
+                lines.append(f"Advisor {label}: {item.get('summary', '')}")
+            lines.append(f"Final debated recommendation: {result.get('summary', '')}")
+        else:
+            lines.append(str(result.get("summary") or ""))
+        return "\n".join(lines).strip()
+
+    def _maybe_inject_advisor_note(self, user_message: str, messages: List[Dict[str, Any]]) -> Optional[str]:
+        """Run advisor policy + execution and append a note to the turn when useful."""
+        try:
+            from agent.advisor_config import (
+                load_advisor_config,
+                resolve_advisor_runtime,
+                resolve_advisor_runtimes,
+            )
+            from agent.advisor_policy import should_request_advice
+            from agent.advisor_runner import (
+                request_debate_advice,
+                request_external_advice,
+                request_parallel_advice,
+            )
+        except Exception as exc:
+            logger.debug("Advisor modules unavailable: %s", exc)
+            return None
+
+        advisor_cfg = load_advisor_config()
+        self._advisor_turn_state = {"uses_this_turn": 0, "last_mode": None, "explicit_request": None}
+        should, reason, mode = should_request_advice(
+            user_text=user_message,
+            cfg=advisor_cfg,
+            turn_state=self._advisor_turn_state,
+        )
+        self._advisor_turn_state["last_mode"] = mode
+        if not should:
+            return None
+
+        context_summary = self._build_advisor_context_summary(messages)
+        result = None
+        try:
+            if mode == "parallel":
+                runtimes = resolve_advisor_runtimes(parent_agent=self)
+                result = request_parallel_advice(
+                    parent_agent=self,
+                    goal=user_message,
+                    context=context_summary,
+                    runtimes=runtimes,
+                )
+            elif mode == "debate":
+                runtimes = resolve_advisor_runtimes(parent_agent=self)
+                result = request_debate_advice(
+                    parent_agent=self,
+                    goal=user_message,
+                    context=context_summary,
+                    runtimes=runtimes,
+                )
+            else:
+                runtime = resolve_advisor_runtime(parent_agent=self)
+                result = request_external_advice(
+                    parent_agent=self,
+                    goal=user_message,
+                    context=context_summary,
+                    runtime=runtime,
+                )
+        except Exception as exc:
+            logger.warning("Advisor execution failed open: %s", exc)
+            return None
+
+        if not isinstance(result, dict) or result.get("status") != "completed":
+            logger.debug("Advisor returned non-completed result: %s", result)
+            return None
+
+        self._advisor_turn_state["uses_this_turn"] = int(self._advisor_turn_state.get("uses_this_turn") or 0) + 1
+        return self._format_advisor_note(result, mode)
+
     def _extract_reasoning(self, assistant_message) -> Optional[str]:
         """
         Extract reasoning/thinking content from an assistant message.
@@ -7811,6 +7926,10 @@ class AIAgent:
         messages.append(user_msg)
         current_turn_user_idx = len(messages) - 1
         self._persist_user_message_idx = current_turn_user_idx
+
+        advisor_note = self._maybe_inject_advisor_note(user_message, messages)
+        if advisor_note:
+            messages.append({"role": "assistant", "content": advisor_note})
         
         if not self.quiet_mode:
             self._safe_print(f"💬 Starting conversation: '{user_message[:60]}{'...' if len(user_message) > 60 else ''}'")
