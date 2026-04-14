@@ -196,3 +196,26 @@ def resolve_advisor_runtimes(parent_agent=None) -> List[Dict[str, Any]]:
         return runtimes
 
     return [resolve_advisor_runtime(parent_agent=parent_agent)]
+
+
+def native_advisor_applicable(cfg: Dict[str, Any], provider: str = "") -> bool:
+    """
+    Returns True if native advisor_20260301 tool should be used for this request.
+    mode "native": requires provider == "anthropic"; raises ValueError otherwise.
+    mode "auto":   True only when provider == "anthropic", False otherwise.
+    other modes:   always False.
+    """
+    if not cfg.get("enabled"):
+        return False
+    mode = str(cfg.get("mode") or "external").strip().lower()
+    is_anthropic = str(provider or "").strip().lower() == "anthropic"
+    if mode == "native":
+        if not is_anthropic:
+            raise ValueError(
+                f"advisor.mode='native' requires provider='anthropic', got '{provider}'. "
+                "Use mode='auto' to fall back to external on non-Anthropic providers."
+            )
+        return True
+    if mode == "auto":
+        return is_anthropic
+    return False

@@ -148,3 +148,35 @@ class TestAdvisorConfig:
 
         with pytest.raises(ValueError, match="no API key was found"):
             resolve_advisor_runtime()
+
+
+def test_native_advisor_applicable_true_when_native_and_anthropic():
+    from agent.advisor_config import native_advisor_applicable
+    cfg = {"enabled": True, "mode": "native", "model": "claude-opus-4-6"}
+    assert native_advisor_applicable(cfg, provider="anthropic") is True
+
+def test_native_advisor_applicable_raises_when_native_non_anthropic():
+    from agent.advisor_config import native_advisor_applicable
+    cfg = {"enabled": True, "mode": "native", "model": "claude-opus-4-6"}
+    with pytest.raises(ValueError, match="provider"):
+        native_advisor_applicable(cfg, provider="openai")
+
+def test_native_advisor_applicable_auto_with_anthropic():
+    from agent.advisor_config import native_advisor_applicable
+    cfg = {"enabled": True, "mode": "auto"}
+    assert native_advisor_applicable(cfg, provider="anthropic") is True
+
+def test_native_advisor_applicable_auto_with_non_anthropic():
+    from agent.advisor_config import native_advisor_applicable
+    cfg = {"enabled": True, "mode": "auto"}
+    assert native_advisor_applicable(cfg, provider="openai") is False
+
+def test_native_advisor_applicable_false_when_disabled():
+    from agent.advisor_config import native_advisor_applicable
+    cfg = {"enabled": False, "mode": "native"}
+    assert native_advisor_applicable(cfg, provider="anthropic") is False
+
+def test_native_advisor_applicable_false_for_external_mode():
+    from agent.advisor_config import native_advisor_applicable
+    cfg = {"enabled": True, "mode": "external"}
+    assert native_advisor_applicable(cfg, provider="anthropic") is False
