@@ -612,7 +612,10 @@ DEFAULT_CONFIG = {
     # external subagent delegation, not Anthropic native advisor-tool.
     "advisor": {
         "enabled": False,
-        "mode": "external",              # external | off
+        "mode": "external",              # external | native | auto | off
+                                          #   native: advisor_20260301 tool, Anthropic only
+                                          #   auto:   native when provider==anthropic, else external
+        "max_uses": 1,                   # max advisor calls per request (native mode)
         "strategy": "on_demand",         # on_demand | always_verify | manual_only
         "invocation": "hybrid",          # explicit | autonomous | hybrid
         "call_mode": "single",           # single | parallel | debate
@@ -746,7 +749,7 @@ DEFAULT_CONFIG = {
     },
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 18,
+    "_config_version": 19,
 }
 
 # =============================================================================

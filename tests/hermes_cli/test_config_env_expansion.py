@@ -151,3 +151,11 @@ class TestAdvisorDefaults:
         assert config["advisor"]["autonomous_modes"]["architecture"] == "parallel"
         assert config["advisor"]["autonomous_modes"]["high_stakes"] == "debate"
         assert config["advisor"]["providers"][0]["oauth_preferred"] is True
+
+
+def test_advisor_config_has_native_mode_and_max_uses():
+    from hermes_cli.config import DEFAULT_CONFIG
+    advisor = DEFAULT_CONFIG["advisor"]
+    assert advisor["mode"] == "external"
+    assert "max_uses" in advisor
+    assert isinstance(advisor["max_uses"], int)
