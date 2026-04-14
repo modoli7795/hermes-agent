@@ -119,6 +119,9 @@ COMMAND_REGISTRY: list[CommandDef] = [
                cli_only=True, args_hint="[name]"),
     CommandDef("voice", "Toggle voice mode", "Configuration",
                args_hint="[on|off|tts|status]", subcommands=("on", "off", "tts", "status")),
+    CommandDef("advisor", "Manage the advisor feature (on/off/status/mode/provider)", "Configuration",
+               args_hint="[on|off|status|mode|provider]",
+               subcommands=("on", "off", "status", "mode", "provider")),
 
     # Tools & Skills
     CommandDef("tools", "Manage tools: /tools [list|disable|enable] [name...]", "Tools & Skills",

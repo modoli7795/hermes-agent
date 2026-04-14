@@ -5563,6 +5563,8 @@ class HermesCLI:
             self._handle_skin_command(cmd_original)
         elif canonical == "voice":
             self._handle_voice_command(cmd_original)
+        elif canonical == "advisor":
+            self._handle_advisor_command(cmd_original)
         else:
             # Check for user-defined quick commands (bypass agent loop, no LLM call)
             base_cmd = cmd_lower.split()[0]
@@ -7224,6 +7226,93 @@ class HermesCLI:
         _cprint(f"\n  {_BOLD}Requirements:{_RST}")
         for line in reqs["details"].split("\n"):
             _cprint(f"    {line}")
+
+    def _handle_advisor_command(self, command: str):
+        """Handle /advisor [on|off|status|mode|provider] command."""
+        from agent.advisor_config import load_advisor_config
+
+        parts = command.strip().split(maxsplit=2)
+        subcommand = parts[1].lower().strip() if len(parts) > 1 else "status"
+        arg = parts[2].strip() if len(parts) > 2 else ""
+
+        if subcommand in ("on", "enable"):
+            save_config_value("advisor.enabled", True)
+            CLI_CONFIG.setdefault("advisor", {})["enabled"] = True
+            _cprint(f"{_ACCENT}Advisor enabled.{_RST} Use /advisor provider <name> to configure.")
+
+        elif subcommand in ("off", "disable"):
+            save_config_value("advisor.enabled", False)
+            CLI_CONFIG.setdefault("advisor", {})["enabled"] = False
+            _cprint(f"{_ACCENT}Advisor disabled.{_RST}")
+
+        elif subcommand == "mode":
+            valid_modes = ("single", "parallel", "debate")
+            if arg not in valid_modes:
+                _cprint(f"Usage: /advisor mode <{'|'.join(valid_modes)}>")
+                return
+            save_config_value("advisor.call_mode", arg)
+            CLI_CONFIG.setdefault("advisor", {})["call_mode"] = arg
+            _cprint(f"{_ACCENT}Advisor default call mode set to: {arg}{_RST}")
+
+        elif subcommand == "provider":
+            if not arg:
+                _cprint("Usage: /advisor provider <provider_name> [model]")
+                _cprint("Example: /advisor provider anthropic claude-opus-4-6")
+                return
+            provider_parts = arg.split(maxsplit=1)
+            provider = provider_parts[0].strip()
+            model = provider_parts[1].strip() if len(provider_parts) > 1 else ""
+            save_config_value("advisor.provider", provider)
+            CLI_CONFIG.setdefault("advisor", {})["provider"] = provider
+            if model:
+                save_config_value("advisor.model", model)
+                CLI_CONFIG["advisor"]["model"] = model
+                _cprint(f"{_ACCENT}Advisor provider set: {provider} / {model}{_RST}")
+            else:
+                _cprint(f"{_ACCENT}Advisor provider set: {provider}{_RST}")
+
+        elif subcommand == "invocation":
+            valid_inv = ("explicit", "autonomous", "hybrid")
+            if arg not in valid_inv:
+                _cprint(f"Usage: /advisor invocation <{'|'.join(valid_inv)}>")
+                return
+            save_config_value("advisor.invocation", arg)
+            CLI_CONFIG.setdefault("advisor", {})["invocation"] = arg
+            _cprint(f"{_ACCENT}Advisor invocation policy set to: {arg}{_RST}")
+
+        else:
+            # Default: show status
+            try:
+                cfg = load_advisor_config()
+            except Exception:
+                cfg = {}
+            enabled = bool(cfg.get("enabled"))
+            mode = cfg.get("mode", "external")
+            call_mode = cfg.get("call_mode", "single")
+            invocation = cfg.get("invocation", "hybrid")
+            provider = cfg.get("provider") or "(not set)"
+            model = cfg.get("model") or "(not set)"
+            providers_list = cfg.get("providers") or []
+
+            _cprint(f"\n{_BOLD}Advisor Status{_RST}")
+            _cprint(f"  Enabled:    {'YES' if enabled else 'NO'}")
+            _cprint(f"  Mode:       {mode}")
+            _cprint(f"  Call mode:  {call_mode}  (single | parallel | debate)")
+            _cprint(f"  Invocation: {invocation}  (explicit | autonomous | hybrid)")
+            _cprint(f"  Provider:   {provider}")
+            _cprint(f"  Model:      {model}")
+            if providers_list:
+                _cprint(f"  Provider pool ({len(providers_list)}):")
+                for p in providers_list:
+                    if isinstance(p, dict) and p.get("provider"):
+                        label = p.get("label") or p.get("provider")
+                        _cprint(f"    - {label}: {p.get('provider')}/{p.get('model', '')}")
+            _cprint(f"\n  Commands:")
+            _cprint(f"    /advisor on|off          — enable or disable")
+            _cprint(f"    /advisor mode <mode>     — single | parallel | debate")
+            _cprint(f"    /advisor provider <p> [model]  — set advisor provider/model")
+            _cprint(f"    /advisor invocation <v>  — explicit | autonomous | hybrid")
+
 
     def _clarify_callback(self, question, choices):
         """
@@ -9728,15 +9817,25 @@ class HermesCLI:
 
         # Validate stdin before launching prompt_toolkit — on macOS with
         # uv-managed Python, fd 0 can be invalid or unregisterable with the
-        # asyncio selector, causing "KeyError: '0 is not registered'" (#6393).
+        # asyncio selector, causing "KeyError: '0 is not registered'" or
+        # "OSError: [Errno 22] Invalid argument" (#6393).
         try:
             import os as _os
+            import selectors as _selectors
             _os.fstat(0)
-        except OSError:
+            _probe = _selectors.DefaultSelector()
+            try:
+                _probe.register(0, _selectors.EVENT_READ)
+                _probe.unregister(0)
+            finally:
+                _probe.close()
+        except Exception as _stdin_err:
             print(
-                "Error: stdin (fd 0) is not available.\n"
-                "This can happen with certain Python installations (e.g. uv-managed cPython on macOS).\n"
-                "Try reinstalling Python via pyenv or Homebrew, then re-run: hermes setup"
+                f"Error: stdin (fd 0) is not usable ({_stdin_err}).\n"
+                "This can happen when launched from non-interactive installer flows,\n"
+                "or with certain Python installations (e.g. uv-managed cPython on macOS).\n"
+                "Run 'hermes' directly in a normal terminal session.\n"
+                "If it persists, reinstall Python via pyenv or Homebrew, then re-run: hermes setup"
             )
             _run_cleanup()
             self._print_exit_summary()
@@ -9758,11 +9857,17 @@ class HermesCLI:
         except (KeyError, OSError) as _stdin_err:
             # Catch selector registration failures from broken stdin (#6393).
             # This is the fallback for cases that slip past the fstat() guard.
-            if "is not registered" in str(_stdin_err) or "Bad file descriptor" in str(_stdin_err):
+            if (
+                "is not registered" in str(_stdin_err)
+                or "Bad file descriptor" in str(_stdin_err)
+                or "Invalid argument" in str(_stdin_err)
+            ):
                 print(
                     f"\nError: stdin is not usable ({_stdin_err}).\n"
-                    "This can happen with certain Python installations (e.g. uv-managed cPython on macOS).\n"
-                    "Try reinstalling Python via pyenv or Homebrew, then re-run: hermes setup"
+                    "This can happen when launched from non-interactive installer flows,\n"
+                    "or with certain Python installations (e.g. uv-managed cPython on macOS).\n"
+                    "Run 'hermes' directly in a normal terminal session.\n"
+                    "If it persists, reinstall Python via pyenv or Homebrew, then re-run: hermes setup"
                 )
             else:
                 raise
